@@ -1,9 +1,12 @@
 (ns lein-monolith.monolith-test
   (:require
     [clojure.java.io :as io]
+    [clojure.string :as str]
     [clojure.test :refer [deftest is]]
     [lein-monolith.test-utils :refer [use-example-project read-example-project]]
-    [leiningen.monolith :as monolith]))
+    [leiningen.monolith :as monolith])
+  (:import
+    java.util.regex.Pattern))
 
 
 (use-example-project)
@@ -67,3 +70,38 @@
           "test/integration"
           "test/unit"]
          (relativize-pprint-output :test-paths))))
+
+
+(deftest classpath-all-test
+  (let [all-absolute-paths
+        (-> (monolith/classpath-all (read-example-project))
+            (with-out-str)
+            (str/split (Pattern/compile (str java.io.File/pathSeparatorChar))))
+
+        internal-relative-paths
+        (->> all-absolute-paths
+             (remove #(str/includes? % "/.m2/"))
+             (map relativize-path))]
+    (is (= ["apps/app-a/test/integration"
+            "apps/app-a/test/unit"
+            "libs/lib-a/test/integration"
+            "libs/lib-a/test/unit"
+            "libs/lib-b/test/integration"
+            "libs/lib-b/test/unit"
+            "libs/subdir/lib-c/test/integration"
+            "libs/subdir/lib-c/test/unit"
+            "test/integration"
+            "test/unit"
+            "apps/app-a/src"
+            "libs/lib-a/src"
+            "libs/lib-b/src"
+            "libs/subdir/lib-c/src"
+            "src"
+            "apps/app-a/resources"
+            "dev-resources"
+            "libs/lib-a/resources"
+            "libs/lib-b/resources"
+            "libs/subdir/lib-c/resources"
+            "resources"
+            "target/compiled"]
+           internal-relative-paths))))

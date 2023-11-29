@@ -11,6 +11,7 @@
     [lein-monolith.task.graph :as graph]
     [lein-monolith.task.info :as info]
     [lein-monolith.task.util :as u]
+    [leiningen.core.classpath :as lein.classpath]
     [leiningen.core.main :as lein]))
 
 
@@ -28,6 +29,17 @@
         project-names (or (seq (map read-string more))
                           [(dep/project-name project)])]
     [opts project-names]))
+
+
+(defn- project->dependencies
+  "For a subproject, return a vector containing the dependencies declared in
+  its project.clj folder."
+  [project]
+  (->> project
+       (:profiles)
+       (vals)
+       (cons project)
+       (mapcat :dependencies)))
 
 
 ;; ## Subtask Vars
@@ -274,13 +286,46 @@
     (fingerprint/clear project opts more)))
 
 
+(defn classpath-all
+  "Print the combined classpath of all subprojects.
+  If two subprojects depend on different versions of the same dependency, one
+  will be chosen arbitrarily."
+  [project]
+  (let [[monolith subprojects] (u/load-monolith! project)
+        targets (target/select monolith subprojects {})
+        profile (plugin/merged-profile monolith (select-keys subprojects targets))
+        external-deps (into
+                        []
+                        (comp
+                          (mapcat project->dependencies)
+                          ;; don't try and retrieve other monolith projects
+                          (remove #(= "MONOLITH-SNAPSHOT" (second %)))
+                          (distinct))
+                        (cons monolith (vals subprojects)))
+        managed-deps (apply concat (cons (:managed-dependencies monolith)
+                                         (vals (:dependency-sets monolith))))
+        project (reduce-kv
+                  (fn remove-replace-meta
+                    [proj k _v]
+                    (update proj k vary-meta dissoc :replace))
+                  project profile)
+        profile-all (-> project
+                        (plugin/add-active-profile :monolith/all profile)
+                        (dissoc :pedantic?)
+                        (assoc :dependencies external-deps)
+                        (assoc :managed-dependencies managed-deps))
+        paths (lein.classpath/get-classpath profile-all)] 
+  (println (str/join java.io.File/pathSeparatorChar paths))))
+
+
 ;; ## Plugin Entry
 
 (defn monolith
   "Tasks for working with Leiningen projects inside a monorepo."
   {:subtasks [#'info #'lint #'deps #'deps-on #'deps-of #'graph
               #'with-all #'each #'link #'unlink
-              #'changed #'mark-fresh #'show-fingerprints #'clear-fingerprints]}
+              #'changed #'mark-fresh #'show-fingerprints #'clear-fingerprints
+              #'classpath-all]}
   [project command & args]
   (case command
     "info"               (info project args)
@@ -297,5 +342,6 @@
     "mark-fresh"         (mark-fresh project args)
     "show-fingerprints"  (show-fingerprints project args)
     "clear-fingerprints" (clear-fingerprints project args)
+    "classpath-all"      (classpath-all project)
     (lein/abort (pr-str command) "is not a valid monolith command! Try: lein help monolith"))
   (flush))
